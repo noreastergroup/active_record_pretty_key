@@ -4,7 +4,9 @@ A Ruby gem for generating and managing pretty, human-readable keys in ActiveReco
 
 The gem automatically generates pretty keys by creating unique integer "tickets" and encoding them with the [Sqids](https://github.com/sqids/sqids-ruby) library to produce short, URL-safe string identifiers. Keys are generated before saving records, ensuring both uniqueness and consistency.
 
-Inspried by:
+**Examples:** `BnJe`, `xK4m`, `Qp7R`, `vN2f8` — short, memorable IDs perfect for URLs like `/posts/xK4m`
+
+Inspired by:
 - [Flickr Ticket Servers: Distributed Unique Primary Keys on the Cheap](https://code.flickr.net/2010/02/08/ticket-servers-distributed-unique-primary-keys-on-the-cheap/)
 - [Hashids](https://github.com/peterhellberg/hashids.rb)
 
