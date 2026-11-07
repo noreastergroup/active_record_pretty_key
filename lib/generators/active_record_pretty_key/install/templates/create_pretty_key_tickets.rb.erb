@@ -5,7 +5,9 @@ class CreatePrettyKeyTickets < ActiveRecord::Migration<%= migration_version %>
     end
     add_index :pretty_key_tickets, :stub, unique: true
 
-    # Seed initial value
-    execute "INSERT INTO pretty_key_tickets (stub) VALUES ('a')"
+    # Seed the single ticket row (dropped along with the table on rollback)
+    up_only do
+      execute "INSERT INTO pretty_key_tickets (stub) VALUES ('a')"
+    end
   end
 end

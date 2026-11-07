@@ -17,11 +17,17 @@ Inspired by:
 | **Human Readable** | ✅ Sequential numbers (1, 2, 3...) | ❌ Long, random strings | ✅ Short, memorable strings |
 | **In Order** | ✅ Yes |  ✅ Yes |  ❌ No |
 | **URL Friendly** | ✅ Simple and clean | ❌ Long and unwieldy | ✅ Short and clean |
-| **Security** | ❌ Predictable, easily guessable | ✅ Random and secure | ✅ Obfuscated but readable |
-| **Length** | ✅ Very short | ❌ Very long (36 chars) | ✅ Short (8-12 chars) |
+| **Guessability** | ❌ Sequential, easily enumerated | ✅ Hard to guess | ⚠️ Obfuscated, not secret (see [Security](#security)) |
+| **Length** | ✅ Very short | ❌ Very long (36 chars) | ✅ Short (4+ chars, grows slowly) |
 | **Collision Risk** | ✅ None (auto-increment) | ✅ Extremely low | ✅ None (ticket database table) |
 
-Pretty keys offer a middle ground between auto-incrementing integers and UUIDs — they're human-readable identifiers that remain secure, performant, and user-friendly.
+Pretty keys offer a middle ground between auto-incrementing integers and UUIDs — short, human-readable identifiers that don't expose your raw row IDs.
+
+## Requirements
+
+- Ruby 3.0+
+- Rails / ActiveRecord 6.1 – 8.x
+- PostgreSQL (incl. PostGIS), MySQL (`mysql2` or `trilogy` adapter) or SQLite. Other databases raise `ActiveRecordPrettyKey::Error`.
 
 ## Installation
 
@@ -53,18 +59,20 @@ First, run the generator to create the required tickets table:
 rails generate active_record_pretty_key:install
 ```
 
-This will create a migration that sets up the tickets table needed for generating unique IDs.
+This creates a `create_pretty_key_tickets` migration for the single-row `pretty_key_tickets` table that hands out unique ticket numbers. Run it with `rails db:migrate`.
 
-### Customizing or Randomising the Sqids Alphabet
+### Customizing or Randomizing the Sqids Alphabet
 
-Configration of a customized Sqids ID alphabet can be done by setting Rails credentials like so:
+A custom Sqids alphabet can be configured in Rails credentials:
 
 ```yaml
 sqids:
   alphabet: "ENwUpVBslGq25afc6i0hyD4tnjxRY31Wouz7HFTeMKgSbmPZvJ9ALXCQdrkI8O"
 ```
 
-This can be used to configure a randomized alphabet to obfuscate object IDs.
+This can be used to configure a randomized alphabet to obfuscate object IDs. The alphabet is read from credentials the first time a key is generated.
+
+> **Warning:** Choose the alphabet before you create any records and never change it afterwards. Existing keys are stored as strings, so a new alphabet can encode a new ticket number to a key that already exists, causing primary key collisions.
 
 To generate a shuffled alphabet:
 ```ruby
@@ -118,14 +126,14 @@ end
 
 ### Generating Keys
 
-Keys are generated before-save automatically:
+Keys are generated automatically before a record is created:
 ```ruby
 post = Post.create(title: "My Awesome Post")
 post.id
 # => "BnJe"
 ```
 
-Or the generation helper can be called manually:
+Or the generation helper can be called manually. It returns the record's key, and does not replace a key that is already set:
 ```ruby
 post = Post.new(title: "My Awesome Post")
 post.generate_pretty_key
@@ -134,9 +142,27 @@ post.generate_pretty_key
 post.save!
 ```
 
+Because keys are generated in a `before_create` callback, which runs *after* validation, don't add `validates :id, presence: true`. If you need the key during validation, generate it first:
+```ruby
+class Post < ApplicationRecord
+  include ActiveRecordPrettyKey::Concern
+  before_validation :generate_pretty_key, on: :create
+end
+```
+
+### Associations
+
+Every column that refers to a pretty-keyed record must also be a string, including foreign keys and polymorphic `*_id` columns:
+```ruby
+create_table :comments, id: :string do |t|
+  t.references :post, type: :string, foreign_key: true
+  t.references :commentable, polymorphic: true, type: :string
+end
+```
+
 ### Active Storage
 
-When working with Active Storage remember to properly set the attachments foreign key type:
+For the same reason, Active Storage's polymorphic `record_id` column must be a string:
 ```ruby
 class FixAttachmentsFks < ActiveRecord::Migration[8.0]
   def change
@@ -145,11 +171,39 @@ class FixAttachmentsFks < ActiveRecord::Migration[8.0]
 end
 ```
 
+### Performance on MySQL
+
+On PostgreSQL, ticket numbers come from a sequence, which takes no locks. On MySQL, generating a ticket updates the single row in `pretty_key_tickets`, and that row stays locked until the surrounding transaction (usually the record's save) commits. Creates of pretty-keyed records are therefore serialized: keep transactions that create them short. SQLite only allows one writer at a time anyway.
+
+## Security
+
+Pretty keys are **obfuscated, not encrypted**. Each key is an encoded, globally sequential ticket number:
+
+- With the default alphabet, anyone can decode a key back to its ticket number (e.g. `Sqids.new(min_length: 4).decode("gbHJ") # => [2]`) and generate the keys before and after it.
+- A shuffled alphabet makes this harder, but it is not a cryptographic secret and should not be treated as one.
+- Because the ticket counter is shared across all models, decoded keys reveal roughly how many records your application has created and how quickly.
+
+Never rely on a key being unguessable for authorization. Always check that the current user is allowed to access the record.
+
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+After checking out the repo, run `bin/setup` to install dependencies and run the specs. Run `bundle exec rspec` to run the tests, and `bin/console` for an interactive prompt with an in-memory database and a `Post` model.
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+The specs use in-memory SQLite by default. To run them against another database, install its driver group and set `DB` (and optionally `DATABASE_URL`):
+
+```bash
+docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pretty_key_test postgres:17
+BUNDLE_WITH=postgresql bundle install
+DB=postgresql bundle exec rspec
+
+docker run -d --rm -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=pretty_key_test mysql:8.4
+BUNDLE_WITH=mysql bundle install
+DB=mysql2 bundle exec rspec   # or DB=trilogy
+```
+
+CI runs the suite against all four adapters.
+
+To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in the `VERSION` file, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org). Releases require RubyGems multi-factor authentication.
 
 ## Contributing
 
