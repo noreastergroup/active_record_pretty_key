@@ -8,16 +8,15 @@ module ActiveRecordPrettyKey
       before_create :generate_pretty_key
     end
 
-    private
-
+    # Assigns a pretty key to the primary key if it is a string column and
+    # not already set. Returns the primary key value, or nil when the model's
+    # primary key is not a single string column.
     def generate_pretty_key
-      pk_attribute = self.class.primary_key
-      return if pk_attribute.nil? || self.class.attribute_types[pk_attribute].nil? || self.class.attribute_types[pk_attribute].type != :string
+      pk = self.class.primary_key
+      return unless pk.is_a?(String) && self.class.type_for_attribute(pk).type == :string
 
-      # Ensure PrettyKeyTicket is available
-      return unless defined?(ActiveRecordPrettyKey::PrettyKeyTicket)
-
-      self.assign_attributes(pk_attribute => ActiveRecordPrettyKey::PrettyKeyTicket.next_sqid) unless self.attributes[pk_attribute].present?
+      self[pk] = ActiveRecordPrettyKey::PrettyKeyTicket.next_sqid if self[pk].blank?
+      self[pk]
     end
   end
 end

@@ -1,0 +1,30 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Interactive console with the gem loaded against an in-memory SQLite database
+# that already has the pretty_key_tickets table and a `Post` model.
+
+require "bundler/setup"
+require "active_record_pretty_key"
+require "irb"
+
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Schema.verbose = false
+ActiveRecord::Schema.define do
+  create_table :pretty_key_tickets, id: :bigint do |t|
+    t.string :stub, limit: 1, null: false
+  end
+  add_index :pretty_key_tickets, :stub, unique: true
+  execute "INSERT INTO pretty_key_tickets (stub) VALUES ('a')"
+
+  create_table :posts, id: :string do |t|
+    t.string :title
+  end
+end
+
+class Post < ActiveRecord::Base
+  include ActiveRecordPrettyKey::Concern
+end
+
+puts "Try: Post.create!(title: \"Hello\").id"
+IRB.start(__FILE__)

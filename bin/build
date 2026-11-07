@@ -1,7 +1,8 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
+
 require "fileutils"
 
-# path to your application root.
 APP_ROOT = File.expand_path("..", __dir__)
 
 def system!(*args)
@@ -9,31 +10,16 @@ def system!(*args)
 end
 
 FileUtils.chdir APP_ROOT do
-  puts "== Building active_record_pretty_key gem =="
+  puts "== Cleaning previous builds =="
+  FileUtils.rm_rf("pkg")
 
-  # Clean previous builds
-  puts "Cleaning previous builds..."
-  FileUtils.rm_rf("pkg") if Dir.exist?("pkg")
-
-  # Run tests to ensure everything is working
-  puts "Running tests..."
+  puts "\n== Running specs =="
   system! "bundle exec rspec"
 
-  # Build the gem
-  puts "Building gem package..."
-  system! "gem build active_record_pretty_key.gemspec"
+  # Bundler's gem tasks build into pkg/
+  puts "\n== Building gem =="
+  system! "bundle exec rake build"
 
-  # Show the built gem
-  puts "\n== Gem built successfully! =="
-  if Dir.exist?("pkg")
-    gems = Dir.glob("pkg/*.gem")
-    if gems.any?
-      puts "Built gems:"
-      gems.each { |gem| puts "  #{gem}" }
-    else
-      puts "No gems found in pkg directory"
-    end
-  end
-
-  puts "\n== Build complete =="
+  puts "\n== Built gems =="
+  Dir.glob("pkg/*.gem").each { |gem| puts "  #{gem}" }
 end
