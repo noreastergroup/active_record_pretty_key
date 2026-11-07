@@ -146,7 +146,33 @@ RSpec.describe ActiveRecordPrettyKey do
       expect(ids.uniq.size).to eq(200)
     end
 
-    it "does not block other connections while the caller's transaction is open", adapters: %w[postgresql] do
+    it "recreates a missing ticket row safely under concurrency", adapters: %w[mysql2 trilogy] do
+      ticket.delete_all
+      threads = Array.new(8) do
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            Array.new(10) { ticket.next_id }
+          end
+        end
+      end
+      ids = threads.flat_map(&:value)
+
+      expect(ids.uniq.size).to eq(80)
+      expect(ticket.count).to eq(1)
+    end
+
+    # In-memory SQLite gives each connection its own empty database
+    it "does not leave the thread's connection checked out", adapters: %w[postgresql mysql2 trilogy] do
+      pool = ActiveRecord::Base.connection_pool
+      still_checked_out = Thread.new do
+        pool.with_connection { ticket.next_id }
+        pool.active_connection?
+      end.value
+
+      expect(still_checked_out).to be_falsey
+    end
+
+    it "does not block other connections while the caller's transaction is open", adapters: %w[postgresql mysql2 trilogy] do
       pool = ActiveRecord::Base.connection_pool
       ready = Queue.new
       release = Queue.new
@@ -163,18 +189,49 @@ RSpec.describe ActiveRecordPrettyKey do
       ready.pop
 
       other = Thread.new do
-        pool.with_connection do |connection|
-          ticket.transaction do
-            connection.execute("SET LOCAL statement_timeout = '2s'")
-            ticket.next_id
-          end
-        end
+        pool.with_connection { ticket.transaction { ticket.next_id } }
       end
 
+      expect(other.join(5)).not_to be_nil, "ticket allocation blocked on the open transaction"
       expect(other.value).to be_a(Integer)
     ensure
       release << true
       holder&.join
+      other&.join
+    end
+
+    it "never reissues an ID allocated in a transaction that rolled back", adapters: %w[postgresql mysql2 trilogy] do
+      issued = nil
+      ActiveRecord::Base.transaction do
+        issued = ticket.next_id
+        raise ActiveRecord::Rollback
+      end
+
+      expect(ticket.next_id).to be > issued
+    end
+
+    it "never gives a later record the key of a record whose transaction rolled back", adapters: %w[postgresql mysql2 trilogy] do
+      ActiveRecord::Base.connection.create_table :posts, id: :string
+      post_class = Class.new(ActiveRecord::Base) do
+        self.table_name = "posts"
+        include ActiveRecordPrettyKey::Concern
+      end
+
+      # e.g. the key was sent to a job or API before the transaction rolled back
+      leaked_key = nil
+      ActiveRecord::Base.transaction do
+        leaked_key = post_class.create!.id
+        raise ActiveRecord::Rollback
+      end
+
+      expect(post_class.create!.id).not_to eq(leaked_key)
+    end
+
+    it "allocates MySQL tickets on a dedicated connection pool", adapters: %w[mysql2 trilogy] do
+      pool = ticket.ticket_connection_pool
+      expect(pool).not_to equal(ActiveRecord::Base.connection_pool)
+      expect(ticket.ticket_connection_pool).to equal(pool)
+      expect(pool.db_config.configuration_hash).to eq(ActiveRecord::Base.connection_db_config.configuration_hash)
     end
 
     it "generates SQIDs from IDs" do
@@ -190,9 +247,17 @@ RSpec.describe ActiveRecordPrettyKey do
       expect(sqid1).not_to eq(sqid2)
     end
 
-    it "raises a clear error when the ticket row is missing", adapters: %w[mysql2 trilogy] do
+    it "works when the table has no ticket row, as after db:schema:load" do
       ticket.delete_all
-      expect { ticket.next_id }.to raise_error(ActiveRecordPrettyKey::Error, /no ticket row/)
+      ids = Array.new(3) { ticket.next_id }
+      expect(ids).to eq(ids.sort)
+      expect(ids.uniq.size).to eq(3)
+    end
+
+    it "keeps issuing larger IDs if the ticket row is deleted", adapters: %w[postgresql mysql2 trilogy] do
+      before = Array.new(3) { ticket.next_id }.last
+      ticket.delete_all
+      expect(ticket.next_id).to be > before
     end
 
     it "raises a clear error for unsupported database adapters" do

@@ -27,7 +27,7 @@ Pretty keys offer a middle ground between auto-incrementing integers and UUIDs â
 
 - Ruby 3.0+
 - Rails / ActiveRecord 6.1 â€“ 8.x
-- PostgreSQL (incl. PostGIS), MySQL (`mysql2` or `trilogy` adapter) or SQLite. Other databases raise `ActiveRecordPrettyKey::Error`.
+- PostgreSQL (incl. PostGIS), MySQL 8.0+ (`mysql2` or `trilogy` adapter) or SQLite. Other databases raise `ActiveRecordPrettyKey::Error`.
 
 ## Installation
 
@@ -171,9 +171,15 @@ class FixAttachmentsFks < ActiveRecord::Migration[8.0]
 end
 ```
 
-### Performance on MySQL
+### How tickets are generated
 
-On PostgreSQL, ticket numbers come from a sequence, which takes no locks. On MySQL, generating a ticket updates the single row in `pretty_key_tickets`, and that row stays locked until the surrounding transaction (usually the record's save) commits. Creates of pretty-keyed records are therefore serialized: keep transactions that create them short. SQLite only allows one writer at a time anyway.
+Keys are generated inside the record's save transaction. A ticket number is never handed out twice, even if that transaction rolls back, and generating one doesn't hold locks until it commits:
+
+- **PostgreSQL** uses a sequence (`nextval`), which takes no locks and is not rolled back.
+- **MySQL** uses a dedicated connection pool for the tickets table, so each ticket commits immediately on its own, separately from your transaction. The pool is created on first use with the same settings as your application's pool, so each process may open up to `pool` additional database connections; account for this in your database's `max_connections`.
+- **SQLite** allows only one writer at a time, so tickets are generated in your transaction and **rolled back with it**. A key that was read inside a transaction that then rolled back (for example, passed to a job or API before the rollback) can be given to a later record. Use keys outside a transaction only once it has committed.
+
+If the ticket row is missing, for example in a database created from `schema.rb` with `db:schema:load` or `db:prepare`, it is recreated automatically.
 
 ## Security
 

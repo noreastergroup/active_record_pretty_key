@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite ticket generation uses the connection-scoped `last_insert_rowid()` instead of reading the last row
 - `generate_pretty_key` is now public, as documented, and returns the record's key
 - MySQL ticket generation no longer deadlocks under concurrency: concurrent `REPLACE INTO` statements deadlock on InnoDB, so it now uses `UPDATE ... SET id = LAST_INSERT_ID(id + 1)`
+- MySQL tickets are allocated on a dedicated connection pool and commit independently of the caller's transaction, so creates no longer wait for each other's transactions to commit
+- Ticket generation no longer leaves the thread's database connection checked out on Rails 7.2+
 - Requiring the gem no longer loads `ActiveRecord::Base` early (before the app's ActiveRecord configuration is applied)
 - `ActiveRecordPrettyKey::VERSION` is now defined when the gem is required
 - Install generator uses Rails' migration numbering and refuses to create a duplicate migration; the generated migration can be rolled back
@@ -21,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Unsupported database adapters now raise `ActiveRecordPrettyKey::Error` instead of using an unsafe fallback
 - README: corrected security claims and documented that the alphabet must not change once records exist
-- Requires Ruby 3.0+ (as the `sqids` dependency always has) and ActiveRecord 6.1 – 8.x
+- Requires Ruby 3.0+ (as the `sqids` dependency always has), ActiveRecord 6.1 – 8.x and, for MySQL, 8.0+
+- On MySQL, each process may open up to `pool` additional connections for ticket generation
 - Gem releases require RubyGems MFA; README, LICENSE and CHANGELOG are now packaged
-- Development: specs run against SQLite, PostgreSQL, MySQL (mysql2 and Trilogy) in CI; added `bin/console`; fixed `bin/setup` and `bin/build`
+- Development: specs run against SQLite, PostgreSQL, MySQL (mysql2 and Trilogy) on Ruby 3.3, 3.4 and 4.0 in CI; added `bin/console`; fixed `bin/setup` and `bin/build`
 
 ### Removed
 - Broken `Thorfile` and `bin/active_record_pretty_key` executable (neither could load the generator), and the `thor` dependency
