@@ -19,10 +19,13 @@ module ActiveRecordPrettyKey
       #   until the caller's transaction commits, so concurrent creates queue.
       # - SQLite: REPLACE + last_insert_rowid(), also connection scoped.
       #   SQLite only allows a single writer, so there is no contention to avoid.
+      #
+      # Every query bypasses the Rails query cache: a cached
+      # `SELECT nextval(...)` would hand out the same ID twice.
       def next_id
         adapter = connection.adapter_name.downcase
 
-        id =
+        id = uncached do
           case adapter
           when "postgresql", "postgis"
             connection.select_value("SELECT nextval(#{connection.quote(sequence_name)})")
@@ -41,6 +44,7 @@ module ActiveRecordPrettyKey
                   "Unsupported database adapter #{connection.adapter_name.inspect}; " \
                   "supported adapters are PostgreSQL, PostGIS, MySQL (mysql2/trilogy) and SQLite"
           end
+        end
 
         Integer(id)
       end

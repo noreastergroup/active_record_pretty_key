@@ -106,6 +106,22 @@ RSpec.describe ActiveRecordPrettyKey do
       expect(id2).to be > id1
     end
 
+    it "generates unique IDs while the query cache is enabled" do
+      ids = ActiveRecord::Base.cache { [ ticket.next_id, ticket.next_id ] }
+      expect(ids.uniq.size).to eq(2)
+    end
+
+    it "generates unique keys for unsaved records while the query cache is enabled" do
+      ActiveRecord::Base.connection.create_table :posts, id: :string
+      post_class = Class.new(ActiveRecord::Base) do
+        self.table_name = "posts"
+        include ActiveRecordPrettyKey::Concern
+      end
+
+      keys = ActiveRecord::Base.cache { [ post_class.new.generate_pretty_key, post_class.new.generate_pretty_key ] }
+      expect(keys.uniq.size).to eq(2)
+    end
+
     it "keeps a single row in the tickets table" do
       3.times { ticket.next_id }
       expect(ticket.count).to eq(1)
