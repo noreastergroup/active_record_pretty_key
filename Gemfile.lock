@@ -70,7 +70,9 @@ GEM
       nokogiri (>= 1.19.5)
     method_source (1.1.0)
     mini_portile2 (2.8.9)
-    minitest (5.25.5)
+    minitest (6.1.0)
+      drb (~> 2.0)
+      prism (>= 1.5, < 3)
     mysql2 (0.5.7)
       bigdecimal
     nokogiri (1.19.7)
